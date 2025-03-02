@@ -197,10 +197,10 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
 
     # If maxRows == -1, read entire file
     if (maxRows < 0) {
-        dt <- fread(filepath, sep = read_sep, showProgress = FALSE)
+        dt <- fread(filepath, sep = read_sep, showProgress = FALSE, colClasses = "character")
         nRowsChecked <- nrow(dt)
     } else {
-        dt <- fread(filepath, sep = read_sep, nrows = maxRows, showProgress = FALSE)
+        dt <- fread(filepath, sep = read_sep, nrows = maxRows, showProgress = FALSE, colClasses = "character")
         nRowsChecked <- min(totalRows, maxRows)
     }
 
