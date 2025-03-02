@@ -123,53 +123,73 @@ if (!is.null(opts$exclude_cols)) {
     }
 }
 
-# ---- Helper: robust date/time parsing with parse_date_time -------------------
-# We'll allow multiple possible orders. If <80% parse successfully, revert to char.
-robust_parse_date <- function(x_char) {
-    if (length(x_char) == 0) {
+# ---- Helper: parse date/time with multiple possible formats ------------------
+robust_parse_date <- function(x_char, success_threshold = 0.8) {
+    if (!is.character(x_char)) {
         return(x_char)
     }
 
-    # Filter out NA / "" to see if there's anything to parse
+    # Remove NA / "" for checking
     x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
     if (length(x_nonempty) == 0) {
         return(x_char)
-    } # nothing to parse
+    }
 
-    # Sample to avoid big overhead
+    # Sample to limit overhead
     sample_size <- min(length(x_nonempty), 1000)
     x_sample <- sample(x_nonempty, sample_size)
 
-    # We can define multiple "orders" to catch various formats
+    # Use parse_date_time with multiple orders
     possible_orders <- c(
-        "Ymd HMS", # e.g. 2023-08-10 13:25:30
-        "Ymd HM", # e.g. 2023-08-10 13:25
-        "Ymd", # e.g. 2023-08-10
-        "YmdT", # e.g. 2023-08-10T13:25:30Z
-        "mdY HMS",
-        "mdY HM",
-        "mdY",
-        "dmy HMS",
-        "dmy HM",
-        "dmy"
+        "Ymd HMS", "Ymd HM", "Ymd", "YmdT",
+        "mdY HMS", "mdY HM", "mdY",
+        "dmy HMS", "dmy HM", "dmy"
     )
 
-    # Parse the sample
     parsed_sample <- suppressWarnings(
         parse_date_time(x_sample, orders = possible_orders, tz = "UTC", quiet = TRUE)
     )
-    # Evaluate success rate
-    success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
-    if (success_rate < 0.8) {
-        return(x_char) # revert to original char
+
+    # success rate
+    sr <- sum(!is.na(parsed_sample)) / length(parsed_sample)
+    if (sr < success_threshold) {
+        # not enough success => keep as character
+        return(x_char)
     }
 
-    # If success, parse entire column
+    # parse full
     parsed_full <- suppressWarnings(
         parse_date_time(x_char, orders = possible_orders, tz = "UTC", quiet = TRUE)
     )
-    # We won't error if partial parse occurs, those rows become NA
-    # If the parse results in mostly NA, you can do another success check if desired
+    # partial failures => NA, but we won't error
+    # optional second pass success check
+    return(parsed_full)
+}
+
+# ---- Helper: parse numeric if enough values are numeric ----------------------
+robust_parse_numeric <- function(x_char, success_threshold = 0.8) {
+    if (!is.character(x_char)) {
+        return(x_char)
+    }
+
+    x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
+    if (length(x_nonempty) == 0) {
+        return(x_char)
+    }
+
+    sample_size <- min(length(x_nonempty), 1000)
+    x_sample <- sample(x_nonempty, sample_size)
+
+    # Try converting sample to numeric
+    nums <- suppressWarnings(as.numeric(x_sample))
+    sr <- sum(!is.na(nums)) / length(nums)
+    if (sr < success_threshold) {
+        return(x_char) # keep as character
+    }
+
+    # Convert entire column
+    parsed_full <- suppressWarnings(as.numeric(x_char))
+    # partial failures => NA
     return(parsed_full)
 }
 
@@ -188,24 +208,32 @@ count_lines_fast <- function(filepath) {
     }
 }
 
-# For each file, read up to maxRows, parse date/time columns if possible,
-# then optionally shift them, then compute column-level stats
-# plus a separate data frame for frequencies.
+# For each file, read up to maxRows as character only, then parse numeric/date columns
 scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                       excluded_cols, shiftDates) {
     totalRows <- count_lines_fast(filepath) - 1L # subtract 1 for header row
 
     # If maxRows == -1, read entire file
     if (maxRows < 0) {
-        dt <- fread(filepath, sep = read_sep, showProgress = FALSE, colClasses = "character")
+        # Force all columns to be read as character
+        dt <- fread(filepath,
+            sep = read_sep, showProgress = FALSE,
+            colClasses = "character"
+        )
         nRowsChecked <- nrow(dt)
     } else {
-        dt <- fread(filepath, sep = read_sep, nrows = maxRows, showProgress = FALSE, colClasses = "character")
+        dt <- fread(filepath,
+            sep = read_sep, nrows = maxRows, showProgress = FALSE,
+            colClasses = "character"
+        )
         nRowsChecked <- min(totalRows, maxRows)
     }
 
-    # Attempt robust date/time parsing on each character column
+    # Attempt to parse numeric / date columns
     for (colName in names(dt)) {
+        # First try numeric
+        dt[[colName]] <- robust_parse_numeric(dt[[colName]])
+        # If still character, try date/time
         if (is.character(dt[[colName]])) {
             dt[[colName]] <- robust_parse_date(dt[[colName]])
         }
@@ -233,13 +261,11 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
     })
     nFieldsEmpty <- sum(all_empty)
 
-    # Exclude any columns specified by the user
+    # Exclude columns if specified
     cols_to_process <- setdiff(names(dt), excluded_cols)
 
-    # Column-level stats
+    # Summaries and frequencies
     column_summaries <- list()
-
-    # Frequencies data for each column
     freq_list <- list()
 
     for (colName in cols_to_process) {
@@ -250,11 +276,11 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         nMissing <- sum(is.na(x))
         nEmpty <- sum(x == "", na.rm = TRUE)
 
-        # Distinct count for entire column
+        # Distinct
         x_nonmissing <- x[!is.na(x) & x != ""]
         distinct_count <- length(unique(x_nonmissing))
 
-        # Frequencies: if distinct_count > 0, we gather them
+        # Frequencies
         freqDF <- data.frame()
         if (distinct_count > 0) {
             tab <- sort(table(x_nonmissing), decreasing = TRUE)
@@ -275,7 +301,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             freq_list[[colName]] <- freqDF
         }
 
-        # Summaries for numeric columns
+        # Numeric stats
         minVal <- NA
         maxVal <- NA
         medianVal <- NA
@@ -286,7 +312,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         iqrVal <- NA
 
         if (is.numeric(x)) {
-            x_num <- x[!is.na(x) & x != ""]
+            x_num <- x[!is.na(x)]
             if (length(x_num) > 0) {
                 minVal <- min(x_num, na.rm = TRUE)
                 maxVal <- max(x_num, na.rm = TRUE)
@@ -300,7 +326,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             }
         }
 
-        # Summaries for date/datetime columns
+        # Date stats
         earliestVal <- NA
         latestVal <- NA
         medianDateVal <- NA
@@ -311,12 +337,12 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                 latestVal <- max(x_date, na.rm = TRUE)
                 med_dt_num <- median(as.numeric(x_date), na.rm = TRUE)
 
-                # We might guess a tz from the first non-NA entry, else use UTC
-                tz_value <- "UTC"
                 if (inherits(x, "POSIXt")) {
-                    non_na_idx <- which(!is.na(x_date))
-                    if (length(non_na_idx) > 0) {
-                        tz_value <- tz(x_date[non_na_idx[1]])
+                    # Attempt to keep a tz if any
+                    tz_value <- "UTC"
+                    idx_nonna <- which(!is.na(x_date))
+                    if (length(idx_nonna) > 0) {
+                        tz_value <- tz(x_date[idx_nonna[1]])
                         if (is.null(tz_value) || tz_value == "") tz_value <- "UTC"
                     }
                     medianDateVal <- as.POSIXct(med_dt_num, origin = "1970-01-01", tz = tz_value)
@@ -332,7 +358,6 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             MissingCount = nMissing,
             EmptyCount = nEmpty,
             DistinctCount = distinct_count,
-            # numeric stats
             MinVal = minVal,
             MaxVal = maxVal,
             MedianVal = medianVal,
@@ -341,7 +366,6 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             Q1Val = q1Val,
             Q3Val = q3Val,
             IQRVal = iqrVal,
-            # date stats
             EarliestVal = if (!is.na(earliestVal)) as.character(earliestVal) else NA,
             LatestVal = if (!is.na(latestVal)) as.character(latestVal) else NA,
             MedianDateVal = if (!is.na(medianDateVal)) as.character(medianDateVal) else NA,
@@ -349,18 +373,16 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         )
     }
 
-    # Combine all column summaries into one data frame
     summaryDF <- if (length(column_summaries) > 0) {
         do.call(rbind, column_summaries)
     } else {
         data.frame(Message = "No columns found or all excluded", stringsAsFactors = FALSE)
     }
 
-    # Combine all frequencies data into one data frame
     freqDF <- if (length(freq_list) > 0) {
         do.call(rbind, freq_list)
     } else {
-        data.frame() # empty
+        data.frame()
     }
 
     list(
@@ -368,7 +390,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         totalRows = totalRows,
         nRowsChecked = nRowsChecked,
         nFields = ncol(dt),
-        nFieldsEmpty = nFieldsEmpty,
+        nFieldsEmpty = sum(all_empty),
         summaryDF = summaryDF,
         freqDF = freqDF
     )
@@ -407,32 +429,30 @@ df_overview <- do.call(rbind, overview_list)
 fmt <- tolower(opts$output_format)
 
 if (fmt == "xlsx") {
-    # Create a single Excel workbook
     wb <- createWorkbook()
 
-    # 1) Overview sheet
+    # 1) Overview
     addWorksheet(wb, "Overview")
     writeData(wb, "Overview", df_overview, headerStyle = createStyle(textDecoration = "bold"))
     setColWidths(wb, "Overview", cols = 1:ncol(df_overview), widths = "auto")
     freezePane(wb, "Overview", firstRow = TRUE)
 
-    # 2) One summary sheet + one frequencies sheet per file
+    # 2) For each file, add summary sheet + freq sheet (if freq data is not empty)
     for (nm in names(results)) {
         shtName <- basename(nm)
-        # Clean up sheet name (max 31 chars, remove invalid chars)
         shtName <- gsub("[\\/?*:]", "_", shtName)
         if (nchar(shtName) > 31) {
             shtName <- substr(shtName, 1, 31)
         }
 
-        # Add summary sheet
+        # Summary sheet
         addWorksheet(wb, shtName)
         df_sum <- results[[nm]]$summaryDF
         writeData(wb, shtName, df_sum, headerStyle = createStyle(textDecoration = "bold"))
         setColWidths(wb, shtName, cols = 1:ncol(df_sum), widths = "auto")
         freezePane(wb, shtName, firstRow = TRUE)
 
-        # Add frequencies sheet if freqDF is non-empty
+        # Frequencies
         df_freq <- results[[nm]]$freqDF
         if (nrow(df_freq) > 0) {
             freqSheetName <- paste0(shtName, "_Freq")
@@ -450,12 +470,12 @@ if (fmt == "xlsx") {
     saveWorkbook(wb, out_xlsx, overwrite = TRUE)
     message("Wrote Excel file: ", out_xlsx)
 } else if (fmt == "tsv") {
-    # Write one TSV for the overview
+    # Overview
     overview_path <- file.path(outdir, paste0(prefix, "_Overview.tsv"))
     fwrite(df_overview, file = overview_path, sep = "\t")
     message("Wrote overview TSV: ", overview_path)
 
-    # For each table, write summary and frequencies TSV
+    # Summaries/frequencies per table
     for (nm in names(results)) {
         shtName <- basename(nm)
         shtName <- gsub("[\\/?*:]", "_", shtName)
