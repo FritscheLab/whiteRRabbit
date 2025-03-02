@@ -265,7 +265,14 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
 
     all_empty <- sapply(dt, function(x) {
         sumNA <- sum(is.na(x))
-        sumEmpty <- sum(x == "", na.rm = TRUE)
+
+        # Only count "" if x is character
+        sumEmpty <- if (is.character(x)) {
+            sum(x == "", na.rm = TRUE)
+        } else {
+            0
+        }
+
         (sumNA + sumEmpty) == length(x)
     })
     nFieldsEmpty <- sum(all_empty)
