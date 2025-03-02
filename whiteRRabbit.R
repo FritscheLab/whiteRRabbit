@@ -123,82 +123,97 @@ if (!is.null(opts$exclude_cols)) {
     }
 }
 
-# ---- Helper: parse date/time with multiple possible formats ------------------
-robust_parse_date <- function(x_char, success_threshold = 0.8) {
+# ---- Helper: robust parse for numeric ----------------------------------------
+robust_parse_numeric <- function(x_char, success_threshold = 0.8) {
+    # Must be character to attempt numeric parse
     if (!is.character(x_char)) {
         return(x_char)
     }
 
-    # Remove NA / "" for checking
     x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
     if (length(x_nonempty) == 0) {
         return(x_char)
     }
 
-    # Sample to limit overhead
+    # Check sample for success rate
     sample_size <- min(length(x_nonempty), 1000)
     x_sample <- sample(x_nonempty, sample_size)
 
-    # Use parse_date_time with multiple orders
+    # Attempt numeric parse
+    nums <- suppressWarnings(as.numeric(x_sample))
+    sr <- sum(!is.na(nums)) / length(nums)
+    if (sr < success_threshold) {
+        # not enough success
+        return(x_char)
+    }
+
+    # Convert entire column
+    parsed_full <- suppressWarnings(as.numeric(x_char))
+    parsed_full
+}
+
+# ---- Helper: robust parse for date/time --------------------------------------
+robust_parse_date <- function(x_char, success_threshold = 0.8) {
+    # Must be character to attempt date parse
+    if (!is.character(x_char)) {
+        return(x_char)
+    }
+
+    x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
+    if (length(x_nonempty) == 0) {
+        return(x_char)
+    }
+
+    sample_size <- min(length(x_nonempty), 1000)
+    x_sample <- sample(x_nonempty, sample_size)
+
+    # We'll define multiple orders
     possible_orders <- c(
         "Ymd HMS", "Ymd HM", "Ymd", "YmdT",
         "mdY HMS", "mdY HM", "mdY",
         "dmy HMS", "dmy HM", "dmy"
     )
 
-    parsed_sample <- suppressWarnings(
-        parse_date_time(x_sample, orders = possible_orders, tz = "UTC", quiet = TRUE)
+    # parse sample in a tryCatch
+    sample_parsed <- tryCatch(
+        {
+            suppressWarnings(parse_date_time(x_sample, orders = possible_orders, tz = "UTC", quiet = TRUE))
+        },
+        error = function(e) {
+            # entire parse failed => return all NA
+            rep(NA, length(x_sample))
+        }
     )
 
-    # success rate
-    sr <- sum(!is.na(parsed_sample)) / length(parsed_sample)
+    sr <- sum(!is.na(sample_parsed)) / length(sample_parsed)
     if (sr < success_threshold) {
-        # not enough success => keep as character
         return(x_char)
     }
 
     # parse full
-    parsed_full <- suppressWarnings(
-        parse_date_time(x_char, orders = possible_orders, tz = "UTC", quiet = TRUE)
+    parsed_full <- tryCatch(
+        {
+            suppressWarnings(parse_date_time(x_char, orders = possible_orders, tz = "UTC", quiet = TRUE))
+        },
+        error = function(e) {
+            # fallback => all NA
+            rep(NA, length(x_char))
+        }
     )
-    # partial failures => NA, but we won't error
+
     # optional second pass success check
-    return(parsed_full)
-}
-
-# ---- Helper: parse numeric if enough values are numeric ----------------------
-robust_parse_numeric <- function(x_char, success_threshold = 0.8) {
-    if (!is.character(x_char)) {
+    sr2 <- sum(!is.na(parsed_full)) / length(parsed_full)
+    if (sr2 < success_threshold) {
+        # revert to character
         return(x_char)
     }
 
-    x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
-    if (length(x_nonempty) == 0) {
-        return(x_char)
-    }
-
-    sample_size <- min(length(x_nonempty), 1000)
-    x_sample <- sample(x_nonempty, sample_size)
-
-    # Try converting sample to numeric
-    nums <- suppressWarnings(as.numeric(x_sample))
-    sr <- sum(!is.na(nums)) / length(nums)
-    if (sr < success_threshold) {
-        return(x_char) # keep as character
-    }
-
-    # Convert entire column
-    parsed_full <- suppressWarnings(as.numeric(x_char))
-    # partial failures => NA
-    return(parsed_full)
+    parsed_full
 }
 
 # ---- Functions ---------------------------------------------------------------
-
-# Count lines quickly (for total row count) without reading full data
 count_lines_fast <- function(filepath) {
     if (.Platform$OS.type == "windows") {
-        # Fallback for Windows if wc not available
         n <- length(readLines(filepath))
         return(n)
     } else {
@@ -208,14 +223,12 @@ count_lines_fast <- function(filepath) {
     }
 }
 
-# For each file, read up to maxRows as character only, then parse numeric/date columns
 scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                       excluded_cols, shiftDates) {
-    totalRows <- count_lines_fast(filepath) - 1L # subtract 1 for header row
+    totalRows <- count_lines_fast(filepath) - 1L
 
-    # If maxRows == -1, read entire file
+    # Force read all as character
     if (maxRows < 0) {
-        # Force all columns to be read as character
         dt <- fread(filepath,
             sep = read_sep, showProgress = FALSE,
             colClasses = "character"
@@ -229,17 +242,15 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         nRowsChecked <- min(totalRows, maxRows)
     }
 
-    # Attempt to parse numeric / date columns
+    # Attempt numeric then date/time parse
     for (colName in names(dt)) {
-        # First try numeric
         dt[[colName]] <- robust_parse_numeric(dt[[colName]])
-        # If still character, try date/time
         if (is.character(dt[[colName]])) {
             dt[[colName]] <- robust_parse_date(dt[[colName]])
         }
     }
 
-    # Optionally shift date/datetime columns by ±5 days
+    # Optionally shift date/datetime columns
     if (shiftDates) {
         for (colName in names(dt)) {
             x <- dt[[colName]]
@@ -250,10 +261,8 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         }
     }
 
-    # Basic stats about the table
     nFields <- ncol(dt)
 
-    # Identify how many columns are 100% empty or missing
     all_empty <- sapply(dt, function(x) {
         sumNA <- sum(is.na(x))
         sumEmpty <- sum(x == "", na.rm = TRUE)
@@ -261,10 +270,8 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
     })
     nFieldsEmpty <- sum(all_empty)
 
-    # Exclude columns if specified
     cols_to_process <- setdiff(names(dt), excluded_cols)
 
-    # Summaries and frequencies
     column_summaries <- list()
     freq_list <- list()
 
@@ -272,11 +279,8 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         x <- dt[[colName]]
         col_class <- class(x)
 
-        # Count missing (NA) and empty ("")
         nMissing <- sum(is.na(x))
         nEmpty <- sum(x == "", na.rm = TRUE)
-
-        # Distinct
         x_nonmissing <- x[!is.na(x) & x != ""]
         distinct_count <- length(unique(x_nonmissing))
 
@@ -301,7 +305,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             freq_list[[colName]] <- freqDF
         }
 
-        # Numeric stats
+        # numeric stats
         minVal <- NA
         maxVal <- NA
         medianVal <- NA
@@ -326,7 +330,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             }
         }
 
-        # Date stats
+        # date stats
         earliestVal <- NA
         latestVal <- NA
         medianDateVal <- NA
@@ -336,9 +340,8 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                 earliestVal <- min(x_date, na.rm = TRUE)
                 latestVal <- max(x_date, na.rm = TRUE)
                 med_dt_num <- median(as.numeric(x_date), na.rm = TRUE)
-
                 if (inherits(x, "POSIXt")) {
-                    # Attempt to keep a tz if any
+                    # guess tz from first non-NA
                     tz_value <- "UTC"
                     idx_nonna <- which(!is.na(x_date))
                     if (length(idx_nonna) > 0) {
@@ -431,13 +434,13 @@ fmt <- tolower(opts$output_format)
 if (fmt == "xlsx") {
     wb <- createWorkbook()
 
-    # 1) Overview
+    # Overview
     addWorksheet(wb, "Overview")
     writeData(wb, "Overview", df_overview, headerStyle = createStyle(textDecoration = "bold"))
     setColWidths(wb, "Overview", cols = 1:ncol(df_overview), widths = "auto")
     freezePane(wb, "Overview", firstRow = TRUE)
 
-    # 2) For each file, add summary sheet + freq sheet (if freq data is not empty)
+    # Summaries & Frequencies
     for (nm in names(results)) {
         shtName <- basename(nm)
         shtName <- gsub("[\\/?*:]", "_", shtName)
@@ -445,7 +448,7 @@ if (fmt == "xlsx") {
             shtName <- substr(shtName, 1, 31)
         }
 
-        # Summary sheet
+        # Summary
         addWorksheet(wb, shtName)
         df_sum <- results[[nm]]$summaryDF
         writeData(wb, shtName, df_sum, headerStyle = createStyle(textDecoration = "bold"))
@@ -470,12 +473,10 @@ if (fmt == "xlsx") {
     saveWorkbook(wb, out_xlsx, overwrite = TRUE)
     message("Wrote Excel file: ", out_xlsx)
 } else if (fmt == "tsv") {
-    # Overview
     overview_path <- file.path(outdir, paste0(prefix, "_Overview.tsv"))
     fwrite(df_overview, file = overview_path, sep = "\t")
     message("Wrote overview TSV: ", overview_path)
 
-    # Summaries/frequencies per table
     for (nm in names(results)) {
         shtName <- basename(nm)
         shtName <- gsub("[\\/?*:]", "_", shtName)
