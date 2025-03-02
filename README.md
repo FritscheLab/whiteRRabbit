@@ -1,10 +1,10 @@
-# whiteRRabbit
+# README.md
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## Overview
 
-**whiteRRabbit** is an R-based data profiling tool derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java application. It scans large delimited files (`.csv`, `.tsv`), producing column-level summaries such as missing counts, empty values, value frequencies, and basic numeric statistics.
+**whiteRRabbit** is an R-based data profiling tool derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java application. It scans large delimited files (`.csv`, `.tsv`), producing column-level summaries such as missing counts, empty values, value frequencies, and basic numeric statistics. The tool now also supports optional date anonymization by randomly shifting date/datetime columns by ±5 days.
 
 The tool is optimized with `data.table` for efficient handling of large datasets and supports multi-threading, configurable limits, and multiple output formats.
 
@@ -18,9 +18,10 @@ The tool is optimized with `data.table` for efficient handling of large datasets
   - Missing and empty value statistics.
   - Frequencies of distinct values (limited to top N).
   - Numeric summaries (mean, standard deviation, quantiles).
+- **New:** Optionally shifts date/datetime columns by ±5 days (via `--shift_dates`) for anonymization.
 - Handles multiple files within a folder.
 - Outputs:
-  - **Excel workbook (`.xlsx`)** with overview and per-file summaries.
+  - **Excel workbook (`.xlsx`)** with an overview sheet and per-file summaries.
   - **TSV files** for downstream processing.
 - Multi-threaded using `data.table`.
 - Fully parameterized via the command line (`optparse`).
@@ -32,14 +33,14 @@ The tool is optimized with `data.table` for efficient handling of large datasets
 ### 1️⃣ Install R (≥ 4.0) and [mamba](https://mamba.readthedocs.io/en/latest/) (optional but recommended):
 
 ```bash
-mamba create -n whiteRRabbit -c conda-forge r-base r-data.table r-optparse r-openxlsx
+mamba create -n whiteRRabbit -c conda-forge r-base r-data.table r-optparse r-openxlsx r-lubridate
 mamba activate whiteRRabbit
 ```
 
 Or install packages in R directly:
 
 ```r
-install.packages(c("data.table", "optparse", "openxlsx"))
+install.packages(c("data.table", "optparse", "openxlsx", "lubridate"))
 ```
 
 ### 2️⃣ Clone the repository:
@@ -60,9 +61,10 @@ Rscript whiteRRabbit.R \
   --output_dir "/path/to/output_folder" \
   --output_format "xlsx" \
   --maxRows 100000 \
-  --maxDistinctValues 500 \
+  --maxDistinctValues 1000 \
   --prefix "MyScanReport" \
-  --cpus 4
+  --cpus 4 \
+  --shift_dates
 ```
 
 For a **full list of options and detailed examples**, see the [whiteRRabbit documentation](/doc/whiteRRabbit.md).

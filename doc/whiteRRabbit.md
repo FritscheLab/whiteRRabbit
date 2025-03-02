@@ -1,8 +1,10 @@
+# doc/whiteRRabbit.md
+
 # whiteRRabbit Documentation
 
 ## 📌 Overview
 
-**whiteRRabbit** is an R-based profiling tool designed to scan delimited text files (TSV or CSV) to create a comprehensive scan report summarizing data structure and content. It provides essential metrics for understanding the quality and characteristics of large tabular datasets, serving as a lightweight and cross-platform alternative to [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit).
+**whiteRRabbit** is an R-based profiling tool designed to scan delimited text files (TSV or CSV) to create a comprehensive scan report summarizing data structure and content. It provides essential metrics for understanding the quality and characteristics of large tabular datasets, serving as a lightweight and cross-platform alternative to [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit). An added functionality allows for the random shifting of date/datetime columns by ±5 days for anonymization.
 
 ---
 
@@ -16,25 +18,27 @@ Rscript whiteRRabbit.R \
   --output_dir "/data/output" \
   --output_format "xlsx" \
   --maxRows 50000 \
-  --maxDistinctValues 500 \
+  --maxDistinctValues 1000 \
   --prefix "DatasetScan" \
-  --cpus 4
+  --cpus 4 \
+  --shift_dates
 ```
 
 ---
 
 ## 🎛️ Argument Reference
 
-| Argument | Type | Default | Description |
-| -------- | ---- | ------- | ----------- |
-| `-w, --working_folder` | `character` | **(Required)** | Directory containing the input files to scan. |
-| `-d, --delimiter` | `character` | `"tab"` | File delimiter: `"tab"` for `.tsv` or `"comma"` for `.csv`. |
-| `-o, --output_dir` | `character` | `"."` (current directory) | Directory where output files will be saved. |
-| `-f, --output_format` | `character` | `"xlsx"` | `"xlsx"` for Excel output or `"tsv"` for plain text files. |
-| `-m, --maxRows` | `integer` | `-1` (all rows) | Maximum number of rows to process per file. |
-| `-x, --maxDistinctValues` | `integer` | `1000` | Maximum number of unique values to show in frequency summaries. |
-| `-p, --prefix` | `character` | `"ScanReport"` | Prefix to use in output file names. |
-| `-c, --cpus` | `integer` | `1` | Number of CPU threads to use with `data.table`. |
+| Argument                  | Type       | Default    | Description                                                                               |
+| ------------------------- | ---------- | ---------- | ----------------------------------------------------------------------------------------- |
+| `-w, --working_folder`    | character  | **(Required)** | Directory containing the input files to scan.                                            |
+| `-d, --delimiter`         | character  | `"tab"`    | File delimiter: `"tab"` for `.tsv` or `"comma"` for `.csv`.                               |
+| `-o, --output_dir`        | character  | `"."` (current directory) | Directory where output files will be saved.                                        |
+| `-f, --output_format`     | character  | `"xlsx"`   | `"xlsx"` for Excel output or `"tsv"` for plain text files.                                |
+| `-m, --maxRows`           | integer    | `-1`       | Maximum number of rows to process per file.                                               |
+| `-x, --maxDistinctValues` | integer    | `1000`     | Maximum number of unique values to show in frequency summaries.                           |
+| `-p, --prefix`            | character  | `"ScanReport"` | Prefix to use in output file names.                                                       |
+| `-c, --cpus`              | integer    | `1`        | Number of CPU threads to use with `data.table`.                                           |
+| `-s, --shift_dates`       | flag       | `FALSE`    | If set, randomly shift date/datetime columns by ±5 days before summarizing.               |
 
 ---
 
@@ -45,19 +49,19 @@ Rscript whiteRRabbit.R \
 | Format | File | Description |
 | ------ | ---- | ----------- |
 | `xlsx` | `ScanReport.xlsx` | Single workbook containing an **Overview** and one sheet per scanned file with column summaries. |
-| `tsv` | `ScanReport_Overview.tsv` | Summary of all files scanned. |
-| `tsv` | `ScanReport_<filename>.tsv` | Column-level summaries for each scanned file. |
+| `tsv`  | `ScanReport_Overview.tsv` | Summary of all files scanned. |
+| `tsv`  | `ScanReport_<filename>.tsv` | Column-level summaries for each scanned file. |
 
 ### 📝 Overview Sheet Example
-| Table | Description | N_rows | N_rows_checked | N_Fields | N_Fields_Empty |
-| ----- | ----------- | ------ | -------------- | -------- | --------------- |
-| example.tsv | No description | 50000 | 50000 | 20 | 2 |
+| Table       | Description    | N_rows | N_rows_checked | N_Fields | N_Fields_Empty |
+| ----------- | -------------- | ------ | -------------- | -------- | --------------- |
+| example.tsv | No description | 50000  | 50000          | 20       | 2               |
 
 ### 📝 Column Summary Example
-| Column | DataType | MissingCount | EmptyCount | Frequencies | NumericStats |
-| ------ | -------- | ------------ | ---------- | ----------- | ------------ |
-| age | numeric | 0 | 0 | | mean=35.2, sd=10.5, Q1=28, median=34, Q3=42 |
-| gender | character | 0 | 0 | Male: 3000, Female: 2000 | |
+| Column | DataType  | MissingCount | EmptyCount | Frequencies                | NumericStats                                            |
+| ------ | --------- | ------------ | ---------- | -------------------------- | ------------------------------------------------------- |
+| age    | numeric   | 0            | 0          |                            | mean=35.2, sd=10.5, Q1=28, median=34, Q3=42               |
+| gender | character | 0            | 0          | Male: 3000, Female: 2000   |                                                         |
 
 ---
 
@@ -70,6 +74,7 @@ For each input file:
    - Counts missing and empty values.
    - Calculates top N frequencies for categorical data.
    - Computes mean, SD, and quartiles for numeric fields.
+   - Attempts to parse date/datetime columns and optionally shifts them by ±5 days if `--shift_dates` is set.
 4. **Overview Assembly**: Creates an overview table summarizing all scanned files.
 5. **Output Generation**: Produces either `.xlsx` or `.tsv` outputs based on user preference.
 
@@ -79,7 +84,7 @@ For each input file:
 
 - **Multi-threading** is handled via `data.table::setDTthreads()`.
 - Efficient for large files; typical for millions of rows per file.
-- Windows-compatible, though `wc -l` optimization is disabled on Windows (fallback to reading full file line counts).
+- Windows-compatible, though the `wc -l` optimization is disabled on Windows (fallback to reading full file line counts).
 
 ---
 
@@ -89,16 +94,17 @@ For each input file:
 - Adjust `--maxDistinctValues` to manage memory usage when profiling high-cardinality categorical fields.
 - Use `mamba` environments for reproducible installations.
 - Prefer `"xlsx"` output for easy browsing; use `"tsv"` for programmatic post-processing.
+- Enable `--shift_dates` when date anonymization is required.
 
 ---
 
 ## 🛠 Troubleshooting
 
-| Issue | Solution |
-| ----- | -------- |
-| No files found in directory | Verify `--working_folder` path and delimiter setting (`csv` vs. `tsv`). |
-| Unsupported output format | Ensure `--output_format` is either `"xlsx"` or `"tsv"`. |
-| Memory usage too high | Lower `--maxRows` or `--maxDistinctValues`. |
+| Issue                             | Solution                                                        |
+| --------------------------------- | ----------------------------------------------------------------|
+| No files found in directory       | Verify `--working_folder` path and delimiter setting (`csv` vs. `tsv`). |
+| Unsupported output format         | Ensure `--output_format` is either `"xlsx"` or `"tsv"`.           |
+| Memory usage too high             | Lower `--maxRows` or `--maxDistinctValues`.                      |
 
 ---
 
