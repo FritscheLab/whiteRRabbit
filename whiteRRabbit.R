@@ -11,8 +11,8 @@
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Unless required by applicable law or agreed to in writing, software distributed
-# under the License is distributed on an "AS IS" BASIS,
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
@@ -123,43 +123,54 @@ if (!is.null(opts$exclude_cols)) {
     }
 }
 
-# ---- Helper: attempt date/time parsing ---------------------------------------
-# Tries to parse a column with common formats (ISO8601, y-m-d, etc.)
-# If parsing is successful on >= 80% of sampled values, convert the entire column.
-detect_and_parse_dates <- function(x) {
-    x_clean <- x[!is.na(x) & x != ""]
-    if (length(x_clean) == 0) {
-        return(x)
+# ---- Helper: robust date/time parsing with parse_date_time -------------------
+# We'll allow multiple possible orders. If <80% parse successfully, revert to char.
+robust_parse_date <- function(x_char) {
+    if (length(x_char) == 0) {
+        return(x_char)
     }
-    sample_size <- min(length(x_clean), 1000)
-    x_sample <- sample(x_clean, sample_size)
 
-    # Try ymd_hms first
-    parsed_sample <- suppressWarnings(ymd_hms(x_sample, quiet = TRUE))
-    if (all(is.na(parsed_sample))) {
-        # Try ymd
-        parsed_sample <- suppressWarnings(ymd(x_sample, quiet = TRUE))
-        if (all(is.na(parsed_sample))) {
-            # Could not parse as date/time
-            return(x)
-        } else {
-            # ymd success rate
-            success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
-            if (success_rate < 0.8) {
-                return(x)
-            }
-            parsed_full <- suppressWarnings(ymd(x, quiet = TRUE))
-            return(parsed_full)
-        }
-    } else {
-        # ymd_hms partial success
-        success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
-        if (success_rate < 0.8) {
-            return(x)
-        }
-        parsed_full <- suppressWarnings(ymd_hms(x, quiet = TRUE))
-        return(parsed_full)
+    # Filter out NA / "" to see if there's anything to parse
+    x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
+    if (length(x_nonempty) == 0) {
+        return(x_char)
+    } # nothing to parse
+
+    # Sample to avoid big overhead
+    sample_size <- min(length(x_nonempty), 1000)
+    x_sample <- sample(x_nonempty, sample_size)
+
+    # We can define multiple "orders" to catch various formats
+    possible_orders <- c(
+        "Ymd HMS", # e.g. 2023-08-10 13:25:30
+        "Ymd HM", # e.g. 2023-08-10 13:25
+        "Ymd", # e.g. 2023-08-10
+        "YmdT", # e.g. 2023-08-10T13:25:30Z
+        "mdY HMS",
+        "mdY HM",
+        "mdY",
+        "dmy HMS",
+        "dmy HM",
+        "dmy"
+    )
+
+    # Parse the sample
+    parsed_sample <- suppressWarnings(
+        parse_date_time(x_sample, orders = possible_orders, tz = "UTC", quiet = TRUE)
+    )
+    # Evaluate success rate
+    success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
+    if (success_rate < 0.8) {
+        return(x_char) # revert to original char
     }
+
+    # If success, parse entire column
+    parsed_full <- suppressWarnings(
+        parse_date_time(x_char, orders = possible_orders, tz = "UTC", quiet = TRUE)
+    )
+    # We won't error if partial parse occurs, those rows become NA
+    # If the parse results in mostly NA, you can do another success check if desired
+    return(parsed_full)
 }
 
 # ---- Functions ---------------------------------------------------------------
@@ -193,11 +204,10 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         nRowsChecked <- min(totalRows, maxRows)
     }
 
-    # Attempt date/time parsing on each column
+    # Attempt robust date/time parsing on each character column
     for (colName in names(dt)) {
-        # If it's already numeric or factor, skip; only parse character columns
         if (is.character(dt[[colName]])) {
-            dt[[colName]] <- detect_and_parse_dates(dt[[colName]])
+            dt[[colName]] <- robust_parse_date(dt[[colName]])
         }
     }
 
@@ -241,15 +251,11 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         nEmpty <- sum(x == "", na.rm = TRUE)
 
         # Distinct count for entire column
-        # (We might not always show it, but it's handy.)
-        distinct_count <- length(unique(x[!is.na(x) & x != ""]))
-
-        # Frequencies: if distinct_count <= maxDistinctValues, we store them
-        # for the "Frequencies" sheet.
-        # We'll do it for all columns. If you only want frequencies for non-numeric,
-        # add a condition here.
-        freqDF <- data.frame()
         x_nonmissing <- x[!is.na(x) & x != ""]
+        distinct_count <- length(unique(x_nonmissing))
+
+        # Frequencies: if distinct_count > 0, we gather them
+        freqDF <- data.frame()
         if (distinct_count > 0) {
             tab <- sort(table(x_nonmissing), decreasing = TRUE)
             if (length(tab) > maxDistinctValues) {
@@ -282,12 +288,12 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         if (is.numeric(x)) {
             x_num <- x[!is.na(x) & x != ""]
             if (length(x_num) > 0) {
-                minVal <- min(x_num)
-                maxVal <- max(x_num)
-                medianVal <- median(x_num)
-                meanVal <- mean(x_num)
-                sdVal <- sd(x_num)
-                qs <- quantile(x_num, probs = c(0.25, 0.75))
+                minVal <- min(x_num, na.rm = TRUE)
+                maxVal <- max(x_num, na.rm = TRUE)
+                medianVal <- median(x_num, na.rm = TRUE)
+                meanVal <- mean(x_num, na.rm = TRUE)
+                sdVal <- sd(x_num, na.rm = TRUE)
+                qs <- quantile(x_num, probs = c(0.25, 0.75), na.rm = TRUE)
                 q1Val <- qs[1]
                 q3Val <- qs[2]
                 iqrVal <- q3Val - q1Val
@@ -301,11 +307,19 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         if (inherits(x, "Date") || inherits(x, "POSIXt")) {
             x_date <- x[!is.na(x)]
             if (length(x_date) > 0) {
-                earliestVal <- min(x_date)
-                latestVal <- max(x_date)
-                med_dt_num <- median(as.numeric(x_date))
+                earliestVal <- min(x_date, na.rm = TRUE)
+                latestVal <- max(x_date, na.rm = TRUE)
+                med_dt_num <- median(as.numeric(x_date), na.rm = TRUE)
+
+                # We might guess a tz from the first non-NA entry, else use UTC
+                tz_value <- "UTC"
                 if (inherits(x, "POSIXt")) {
-                    medianDateVal <- as.POSIXct(med_dt_num, origin = "1970-01-01", tz = tz(x_date))
+                    non_na_idx <- which(!is.na(x_date))
+                    if (length(non_na_idx) > 0) {
+                        tz_value <- tz(x_date[non_na_idx[1]])
+                        if (is.null(tz_value) || tz_value == "") tz_value <- "UTC"
+                    }
+                    medianDateVal <- as.POSIXct(med_dt_num, origin = "1970-01-01", tz = tz_value)
                 } else {
                     medianDateVal <- as.Date(med_dt_num, origin = "1970-01-01")
                 }
@@ -319,14 +333,14 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             EmptyCount = nEmpty,
             DistinctCount = distinct_count,
             # numeric stats
-            MinVal = if (!is.na(minVal)) sprintf("%.2f", minVal) else NA,
-            MaxVal = if (!is.na(maxVal)) sprintf("%.2f", maxVal) else NA,
-            MedianVal = if (!is.na(medianVal)) sprintf("%.2f", medianVal) else NA,
-            MeanVal = if (!is.na(meanVal)) sprintf("%.2f", meanVal) else NA,
-            SDVal = if (!is.na(sdVal)) sprintf("%.2f", sdVal) else NA,
-            Q1Val = if (!is.na(q1Val)) sprintf("%.2f", q1Val) else NA,
-            Q3Val = if (!is.na(q3Val)) sprintf("%.2f", q3Val) else NA,
-            IQRVal = if (!is.na(iqrVal)) sprintf("%.2f", iqrVal) else NA,
+            MinVal = minVal,
+            MaxVal = maxVal,
+            MedianVal = medianVal,
+            MeanVal = meanVal,
+            SDVal = sdVal,
+            Q1Val = q1Val,
+            Q3Val = q3Val,
+            IQRVal = iqrVal,
             # date stats
             EarliestVal = if (!is.na(earliestVal)) as.character(earliestVal) else NA,
             LatestVal = if (!is.na(latestVal)) as.character(latestVal) else NA,
