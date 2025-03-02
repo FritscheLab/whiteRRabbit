@@ -287,8 +287,22 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         col_class <- class(x)
 
         nMissing <- sum(is.na(x))
-        nEmpty <- sum(x == "", na.rm = TRUE)
-        x_nonmissing <- x[!is.na(x) & x != ""]
+        # Counting empty strings safely
+        nEmpty <- if (is.character(x)) {
+            sum(x == "", na.rm = TRUE)
+        } else {
+            0
+        }
+
+        if (is.character(x)) {
+            # For character columns, exclude both NA and ""
+            x_nonmissing <- x[!is.na(x) & x != ""]
+        } else {
+            # For numeric / date / other columns, just exclude NA
+            x_nonmissing <- x[!is.na(x)]
+        }
+
+
         distinct_count <- length(unique(x_nonmissing))
 
         # Frequencies
