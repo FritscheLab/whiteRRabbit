@@ -65,23 +65,7 @@ Rscript whiteRRabbit.R \
   --cpus 4
 ```
 
-### Required arguments:
-
-| Option | Description |
-| ------ | ----------- |
-| `--working_folder` | Directory containing input `.csv` or `.tsv` files. |
-
-### Optional arguments:
-
-| Option | Default | Description |
-| ------ | ------- | ----------- |
-| `--delimiter` | `tab` | File delimiter (`tab` or `comma`). |
-| `--output_dir` | `.` | Directory for output files. |
-| `--output_format` | `xlsx` | Output type (`xlsx` or `tsv`). |
-| `--maxRows` | `-1` | Maximum rows to read per file (`-1` for all rows). |
-| `--maxDistinctValues` | `1000` | Max unique values shown in frequencies. |
-| `--prefix` | `ScanReport` | Prefix for output file names. |
-| `--cpus` | `1` | Number of threads for `data.table`. |
+For a **full list of options and detailed examples**, see the [whiteRRabbit documentation](/doc/whiteRRabbit.md).
 
 ---
 
@@ -90,8 +74,9 @@ Rscript whiteRRabbit.R \
 ```
 whiteRRabbit/
 ├── whiteRRabbit.R      # Main script
-├── README.md           # Documentation
-└── /doc/               # Extended documentation (optional)
+├── README.md           # Repository overview
+└── /doc/
+    └── whiteRRabbit.md # Detailed usage documentation
 ```
 
 ---
