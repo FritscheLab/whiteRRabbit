@@ -50,7 +50,7 @@ option_list <- list(
     ),
     make_option(c("-x", "--maxDistinctValues"),
         type = "integer", default = 1000,
-        help = "Maximum distinct values to display in 'Frequencies' [default: %default]", metavar = "N"
+        help = "Maximum distinct values to display in Frequencies [default: %default]", metavar = "N"
     ),
     make_option(c("-p", "--prefix"),
         type = "character", default = "ScanReport",
@@ -124,41 +124,35 @@ if (!is.null(opts$exclude_cols)) {
 }
 
 # ---- Helper: attempt date/time parsing ---------------------------------------
-# This tries to parse a column with several common formats (ISO8601, y-m-d, etc.)
-# If successful on enough non-empty rows, we convert the entire column.
+# Tries to parse a column with common formats (ISO8601, y-m-d, etc.)
+# If parsing is successful on >= 80% of sampled values, convert the entire column.
 detect_and_parse_dates <- function(x) {
-    # Work on a copy of x
     x_clean <- x[!is.na(x) & x != ""]
     if (length(x_clean) == 0) {
         return(x)
-    } # No data to parse
-
-    # Try parse with ymd_hms (handles "1966-04-28T04:00:00Z" and variants)
-    # We'll do a small sample to avoid huge overhead
+    }
     sample_size <- min(length(x_clean), 1000)
     x_sample <- sample(x_clean, sample_size)
 
-    # If parsing fails for all or most, we skip
+    # Try ymd_hms first
     parsed_sample <- suppressWarnings(ymd_hms(x_sample, quiet = TRUE))
-    # If that didn't work well, try ymd
     if (all(is.na(parsed_sample))) {
+        # Try ymd
         parsed_sample <- suppressWarnings(ymd(x_sample, quiet = TRUE))
         if (all(is.na(parsed_sample))) {
-            # If we get here, we didn't parse well
-            return(x) # Return original
+            # Could not parse as date/time
+            return(x)
         } else {
-            # ymd parsing was somewhat successful
-            # check success rate
+            # ymd success rate
             success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
             if (success_rate < 0.8) {
                 return(x)
             }
-            # If enough success, parse entire vector
             parsed_full <- suppressWarnings(ymd(x, quiet = TRUE))
             return(parsed_full)
         }
     } else {
-        # ymd_hms was somewhat successful
+        # ymd_hms partial success
         success_rate <- sum(!is.na(parsed_sample)) / length(parsed_sample)
         if (success_rate < 0.8) {
             return(x)
@@ -184,7 +178,8 @@ count_lines_fast <- function(filepath) {
 }
 
 # For each file, read up to maxRows, parse date/time columns if possible,
-# then optionally shift them, then compute column-level stats.
+# then optionally shift them, then compute column-level stats
+# plus a separate data frame for frequencies.
 scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                       excluded_cols, shiftDates) {
     totalRows <- count_lines_fast(filepath) - 1L # subtract 1 for header row
@@ -234,6 +229,9 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
     # Column-level stats
     column_summaries <- list()
 
+    # Frequencies data for each column
+    freq_list <- list()
+
     for (colName in cols_to_process) {
         x <- dt[[colName]]
         col_class <- class(x)
@@ -242,76 +240,76 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         nMissing <- sum(is.na(x))
         nEmpty <- sum(x == "", na.rm = TRUE)
 
-        # Frequencies for non‐numeric, non-date columns (ignoring missing/empty)
-        freqText <- ""
-        if (!is.numeric(x) && !inherits(x, "Date") && !inherits(x, "POSIXt")) {
-            x_nonmissing <- x[!is.na(x) & x != ""]
+        # Distinct count for entire column
+        # (We might not always show it, but it's handy.)
+        distinct_count <- length(unique(x[!is.na(x) & x != ""]))
+
+        # Frequencies: if distinct_count <= maxDistinctValues, we store them
+        # for the "Frequencies" sheet.
+        # We'll do it for all columns. If you only want frequencies for non-numeric,
+        # add a condition here.
+        freqDF <- data.frame()
+        x_nonmissing <- x[!is.na(x) & x != ""]
+        if (distinct_count > 0) {
             tab <- sort(table(x_nonmissing), decreasing = TRUE)
+            if (length(tab) > maxDistinctValues) {
+                tab <- tab[1:maxDistinctValues]
+            }
             if (length(tab) > 0) {
-                if (length(tab) > maxDistinctValues) {
-                    tab <- tab[1:maxDistinctValues]
-                }
-                freqText <- paste(
-                    sprintf("%s: %d", names(tab), as.integer(tab)),
-                    collapse = ", "
+                freqDF <- data.frame(
+                    Column = colName,
+                    Value = names(tab),
+                    Count = as.integer(tab),
+                    Percentage = as.numeric(tab) / sum(tab) * 100,
+                    stringsAsFactors = FALSE
                 )
             }
         }
+        if (nrow(freqDF) > 0) {
+            freq_list[[colName]] <- freqDF
+        }
 
         # Summaries for numeric columns
-        numStatsText <- ""
+        minVal <- NA
+        maxVal <- NA
+        medianVal <- NA
+        meanVal <- NA
+        sdVal <- NA
+        q1Val <- NA
+        q3Val <- NA
+        iqrVal <- NA
+
         if (is.numeric(x)) {
             x_num <- x[!is.na(x) & x != ""]
             if (length(x_num) > 0) {
-                mn <- mean(x_num)
-                sdev <- sd(x_num)
-                med <- median(x_num)
+                minVal <- min(x_num)
+                maxVal <- max(x_num)
+                medianVal <- median(x_num)
+                meanVal <- mean(x_num)
+                sdVal <- sd(x_num)
                 qs <- quantile(x_num, probs = c(0.25, 0.75))
-                lowest <- min(x_num)
-                highest <- max(x_num)
-                numStatsText <- sprintf(
-                    "min=%.2f, max=%.2f, median=%.2f, mean=%.2f, sd=%.2f, Q1=%.2f, Q3=%.2f",
-                    lowest, highest, med, mn, sdev, qs[1], qs[2]
-                )
-            } else {
-                numStatsText <- "No numeric data (all missing/empty)."
+                q1Val <- qs[1]
+                q3Val <- qs[2]
+                iqrVal <- q3Val - q1Val
             }
         }
 
         # Summaries for date/datetime columns
-        dateStatsText <- ""
+        earliestVal <- NA
+        latestVal <- NA
+        medianDateVal <- NA
         if (inherits(x, "Date") || inherits(x, "POSIXt")) {
             x_date <- x[!is.na(x)]
             if (length(x_date) > 0) {
-                earliest <- min(x_date)
-                latest <- max(x_date)
-                med_dt <- median(as.numeric(x_date)) # numeric for median
-                # Convert back to date/time
-                med_dt <- if (inherits(x, "POSIXt")) {
-                    as.POSIXct(med_dt, origin = "1970-01-01", tz = tz(x_date))
+                earliestVal <- min(x_date)
+                latestVal <- max(x_date)
+                med_dt_num <- median(as.numeric(x_date))
+                if (inherits(x, "POSIXt")) {
+                    medianDateVal <- as.POSIXct(med_dt_num, origin = "1970-01-01", tz = tz(x_date))
                 } else {
-                    as.Date(med_dt, origin = "1970-01-01")
+                    medianDateVal <- as.Date(med_dt_num, origin = "1970-01-01")
                 }
-                dateStatsText <- sprintf(
-                    "Earliest=%s, Latest=%s, Median=%s",
-                    as.character(earliest),
-                    as.character(latest),
-                    as.character(med_dt)
-                )
-            } else {
-                dateStatsText <- "No date data (all missing)."
             }
-        }
-
-        # Combine numericStats + dateStats if needed
-        # We'll store them in a single "NumericStats" column for convenience,
-        # or you could store them separately
-        combinedStats <- if (dateStatsText != "" && numStatsText != "") {
-            paste(dateStatsText, " | ", numStatsText)
-        } else if (dateStatsText != "") {
-            dateStatsText
-        } else {
-            numStatsText
         }
 
         column_summaries[[colName]] <- data.frame(
@@ -319,26 +317,46 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             DataType = paste(col_class, collapse = ", "),
             MissingCount = nMissing,
             EmptyCount = nEmpty,
-            Frequencies = freqText,
-            NumericStats = combinedStats,
+            DistinctCount = distinct_count,
+            # numeric stats
+            MinVal = if (!is.na(minVal)) sprintf("%.2f", minVal) else NA,
+            MaxVal = if (!is.na(maxVal)) sprintf("%.2f", maxVal) else NA,
+            MedianVal = if (!is.na(medianVal)) sprintf("%.2f", medianVal) else NA,
+            MeanVal = if (!is.na(meanVal)) sprintf("%.2f", meanVal) else NA,
+            SDVal = if (!is.na(sdVal)) sprintf("%.2f", sdVal) else NA,
+            Q1Val = if (!is.na(q1Val)) sprintf("%.2f", q1Val) else NA,
+            Q3Val = if (!is.na(q3Val)) sprintf("%.2f", q3Val) else NA,
+            IQRVal = if (!is.na(iqrVal)) sprintf("%.2f", iqrVal) else NA,
+            # date stats
+            EarliestVal = if (!is.na(earliestVal)) as.character(earliestVal) else NA,
+            LatestVal = if (!is.na(latestVal)) as.character(latestVal) else NA,
+            MedianDateVal = if (!is.na(medianDateVal)) as.character(medianDateVal) else NA,
             stringsAsFactors = FALSE
         )
     }
 
     # Combine all column summaries into one data frame
-    if (length(column_summaries) > 0) {
-        df_summary <- do.call(rbind, column_summaries)
+    summaryDF <- if (length(column_summaries) > 0) {
+        do.call(rbind, column_summaries)
     } else {
-        df_summary <- data.frame(Message = "No columns found or all excluded", stringsAsFactors = FALSE)
+        data.frame(Message = "No columns found or all excluded", stringsAsFactors = FALSE)
+    }
+
+    # Combine all frequencies data into one data frame
+    freqDF <- if (length(freq_list) > 0) {
+        do.call(rbind, freq_list)
+    } else {
+        data.frame() # empty
     }
 
     list(
         file = filepath,
         totalRows = totalRows,
         nRowsChecked = nRowsChecked,
-        nFields = nFields,
+        nFields = ncol(dt),
         nFieldsEmpty = nFieldsEmpty,
-        summaryDF = df_summary
+        summaryDF = summaryDF,
+        freqDF = freqDF
     )
 }
 
@@ -384,7 +402,7 @@ if (fmt == "xlsx") {
     setColWidths(wb, "Overview", cols = 1:ncol(df_overview), widths = "auto")
     freezePane(wb, "Overview", firstRow = TRUE)
 
-    # 2) One sheet per file
+    # 2) One summary sheet + one frequencies sheet per file
     for (nm in names(results)) {
         shtName <- basename(nm)
         # Clean up sheet name (max 31 chars, remove invalid chars)
@@ -393,11 +411,25 @@ if (fmt == "xlsx") {
             shtName <- substr(shtName, 1, 31)
         }
 
+        # Add summary sheet
         addWorksheet(wb, shtName)
-        df <- results[[nm]]$summaryDF
-        writeData(wb, shtName, df, headerStyle = createStyle(textDecoration = "bold"))
-        setColWidths(wb, shtName, cols = 1:ncol(df), widths = "auto")
+        df_sum <- results[[nm]]$summaryDF
+        writeData(wb, shtName, df_sum, headerStyle = createStyle(textDecoration = "bold"))
+        setColWidths(wb, shtName, cols = 1:ncol(df_sum), widths = "auto")
         freezePane(wb, shtName, firstRow = TRUE)
+
+        # Add frequencies sheet if freqDF is non-empty
+        df_freq <- results[[nm]]$freqDF
+        if (nrow(df_freq) > 0) {
+            freqSheetName <- paste0(shtName, "_Freq")
+            if (nchar(freqSheetName) > 31) {
+                freqSheetName <- substr(freqSheetName, 1, 31)
+            }
+            addWorksheet(wb, freqSheetName)
+            writeData(wb, freqSheetName, df_freq, headerStyle = createStyle(textDecoration = "bold"))
+            setColWidths(wb, freqSheetName, cols = 1:ncol(df_freq), widths = "auto")
+            freezePane(wb, freqSheetName, firstRow = TRUE)
+        }
     }
 
     out_xlsx <- file.path(outdir, paste0(prefix, ".xlsx"))
@@ -409,15 +441,22 @@ if (fmt == "xlsx") {
     fwrite(df_overview, file = overview_path, sep = "\t")
     message("Wrote overview TSV: ", overview_path)
 
-    # Write one TSV per file
+    # For each table, write summary and frequencies TSV
     for (nm in names(results)) {
         shtName <- basename(nm)
         shtName <- gsub("[\\/?*:]", "_", shtName)
-        df <- results[[nm]]$summaryDF
 
-        out_tsv <- file.path(outdir, paste0(prefix, "_", shtName, ".tsv"))
-        fwrite(df, file = out_tsv, sep = "\t")
-        message("Wrote file TSV: ", out_tsv)
+        df_sum <- results[[nm]]$summaryDF
+        sum_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Summary.tsv"))
+        fwrite(df_sum, file = sum_tsv, sep = "\t")
+        message("Wrote summary TSV: ", sum_tsv)
+
+        df_freq <- results[[nm]]$freqDF
+        if (nrow(df_freq) > 0) {
+            freq_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Freq.tsv"))
+            fwrite(df_freq, file = freq_tsv, sep = "\t")
+            message("Wrote frequencies TSV: ", freq_tsv)
+        }
     }
 } else {
     stop("Unsupported --output_format. Use 'xlsx' or 'tsv'.", call. = FALSE)

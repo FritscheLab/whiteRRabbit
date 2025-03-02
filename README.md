@@ -1,10 +1,10 @@
-# README.md
+# whiteRRabbit
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 
 ## Overview
 
-**whiteRRabbit** is an R-based data profiling tool derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java application. It scans large delimited files (`.csv`, `.tsv`), producing column-level summaries such as missing counts, empty values, value frequencies, and basic numeric statistics. The tool now also supports optional date anonymization by randomly shifting date/datetime columns by ±5 days.
+**whiteRRabbit** is an R-based data profiling tool derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java application. It scans large delimited files (`.csv`, `.tsv`), producing column-level summaries such as missing counts, empty values, value frequencies, basic numeric statistics, and date/time summaries.
 
 The tool is optimized with `data.table` for efficient handling of large datasets and supports multi-threading, configurable limits, and multiple output formats.
 
@@ -17,14 +17,17 @@ The tool is optimized with `data.table` for efficient handling of large datasets
   - Row and field counts.
   - Missing and empty value statistics.
   - Frequencies of distinct values (limited to top N).
-  - Numeric summaries (mean, standard deviation, quantiles).
-- **New:** Optionally shifts date/datetime columns by ±5 days (via `--shift_dates`) for anonymization.
+  - Numeric summaries (min, max, median, mean, standard deviation, quartiles, IQR).
+  - Date/time parsing and summaries (Earliest, Latest, Median date).
 - Handles multiple files within a folder.
 - Outputs:
-  - **Excel workbook (`.xlsx`)** with an overview sheet and per-file summaries.
-  - **TSV files** for downstream processing.
+  - **Excel workbook (`.xlsx`)** with an Overview sheet, individual summary sheets for each file, and optional frequency sheets.
+  - **TSV files** for downstream processing, including overview, summary, and frequency files.
 - Multi-threaded using `data.table`.
 - Fully parameterized via the command line (`optparse`).
+- **New Functionality:**
+  - **Exclude Columns:** Use `--exclude_cols` to omit specified columns from the summary.
+  - **Shift Dates:** Use the `--shift_dates` flag to randomly shift date/datetime columns by ±5 days before summarizing.
 
 ---
 
@@ -60,10 +63,11 @@ Rscript whiteRRabbit.R \
   --delimiter "tab" \
   --output_dir "/path/to/output_folder" \
   --output_format "xlsx" \
-  --maxRows 100000 \
+  --maxRows -1 \
   --maxDistinctValues 1000 \
   --prefix "MyScanReport" \
   --cpus 4 \
+  --exclude_cols "col1,col2" \
   --shift_dates
 ```
 
@@ -90,11 +94,13 @@ Depending on the chosen `--output_format`:
 ### XLSX
 - `ScanReport.xlsx`
   - **Overview** sheet: Summary of all scanned files.
-  - One sheet per input file with column-level statistics.
+  - One sheet per input file with column-level summaries.
+  - Additional frequency sheet(s) per file (if frequency data exists).
 
 ### TSV
 - `ScanReport_Overview.tsv`
-- One TSV per input file with column-level statistics.
+- One TSV per input file for column summaries.
+- Additional TSV file(s) for frequency data (if available).
 
 ---
 
@@ -109,15 +115,15 @@ Depending on the chosen `--output_format`:
 
 - Stops if:
   - `--working_folder` is missing.
-  - No input files matching the delimiter are found.
-  - Unsupported output format is provided.
+  - No input files matching the specified delimiter are found.
+  - An unsupported output format is provided.
 - Automatically creates output directories if missing.
 
 ---
 
 ## 📖 Inspiration
 
-Derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java tool, adapted into R for integration into FritscheLab workflows and enhanced compatibility with data.table and tidy R environments.
+Derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java tool, adapted into R for integration into FritscheLab workflows and enhanced with additional functionality for date shifting and column exclusion.
 
 ---
 
