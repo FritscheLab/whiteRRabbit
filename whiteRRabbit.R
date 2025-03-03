@@ -44,7 +44,6 @@ option_list <- list(
         help = "Output format: 'xlsx' (one Excel file) or 'tsv' (multiple TSVs) [default: %default]",
         metavar = "FORMAT"
     ),
-    # Set default maxRows to 100,000 so that by default only 100,000 rows are processed.
     make_option(c("-m", "--maxRows"),
         type = "integer", default = 100000,
         help = "Maximum rows to read per file (-1 for all). If random_sample is TRUE, a random sample of maxRows is used [default: %default]", metavar = "N"
@@ -69,17 +68,14 @@ option_list <- list(
         action = "store_true", default = FALSE,
         help = "If set, randomly shift date/datetime columns by ±5 days before summarizing"
     ),
-    # New option: whether to generate frequency tables by scanning field values.
     make_option(c("--scan_field_values"),
         action = "store_true", default = TRUE,
         help = "Scan field values to generate frequency tables [default: %default]"
     ),
-    # New option: minimum cell count required for a value to appear in frequency tables.
     make_option(c("--min_cell_count"),
         type = "integer", default = 5,
         help = "Minimum count threshold for a value to appear in frequency tables [default: %default]", metavar = "N"
     ),
-    # New option: use random sampling on the file level.
     make_option(c("--random_sample"),
         action = "store_true", default = TRUE,
         help = "Randomly sample rows from table if total rows exceed maxRows [default: %default]"
