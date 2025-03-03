@@ -327,7 +327,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                         Column = colName,
                         Value = names(tab),
                         Count = as.integer(tab),
-                        Percentage = as.numeric(tab) / sum(tab) * 100,
+                        Percentage = as.numeric(tab) / sum(tab),
                         stringsAsFactors = FALSE
                     )
                 }
