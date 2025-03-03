@@ -152,6 +152,11 @@ robust_parse_numeric <- function(x_char, success_threshold = 0.8) {
         return(x_char)
     }
     parsed_full <- suppressWarnings(as.numeric(x_char))
+    # Compare NAs introduced
+    na_new <- is.na(parsed_full) & !is.na(x_char) & x_char != ""
+    if (any(na_new)) {
+        return(x_char)
+    }
     parsed_full
 }
 
@@ -273,7 +278,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             x <- dt[[colName]]
             if (inherits(x, "Date") || inherits(x, "POSIXt")) {
                 offsets <- sample(-5:5, length(x), replace = TRUE)
-                dt[[colName]] <- x + offsets
+                dt[[colName]] <- x + days(offsets)
             }
         }
     }
