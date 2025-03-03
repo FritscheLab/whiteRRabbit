@@ -50,7 +50,7 @@ option_list <- list(
         help = "Maximum rows to read per file (-1 for all). If random_sample is TRUE, a random sample of maxRows is used [default: %default]", metavar = "N"
     ),
     make_option(c("-x", "--maxDistinctValues"),
-        type = "integer", default = 1000,
+        type = "integer", default = 50,
         help = "Maximum distinct values to display in Frequencies [default: %default]", metavar = "N"
     ),
     make_option(c("-p", "--prefix"),
@@ -318,7 +318,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
 
         # Generate frequency table if scan_field_values is TRUE
         freqDF <- data.frame()
-        if (scan_field_values) {
+        if (scan_field_values && !(inherits(x, "Date") || inherits(x, "POSIXt"))) {
             if (distinct_count > 0) {
                 tab <- sort(table(x_nonmissing), decreasing = TRUE)
                 # Only include values that appear at least min_cell_count times
