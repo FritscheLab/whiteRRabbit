@@ -303,6 +303,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         x <- dt[[colName]]
         col_class <- class(x)
 
+        nAll <- length(x)
         nMissing <- sum(is.na(x))
         nEmpty <- if (is.character(x)) {
             sum(x == "", na.rm = TRUE)
@@ -315,6 +316,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         } else {
             x_nonmissing <- x[!is.na(x)]
         }
+        nNonMissing <- length(x_nonmissing)
         distinct_count <- length(unique(x_nonmissing))
 
         # Generate frequency table if scan_field_values is TRUE
@@ -393,6 +395,8 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         column_summaries[[colName]] <- data.frame(
             Column = colName,
             DataType = paste(col_class, collapse = ", "),
+            TotalCount = nAll,
+            NonMissingCount = nNonMissing,
             MissingCount = nMissing,
             EmptyCount = nEmpty,
             DistinctCount = distinct_count,
