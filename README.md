@@ -133,6 +133,10 @@ Depending on the chosen `--output_format`:
 
 Derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java tool, adapted into R for integration into FritscheLab workflows and enhanced with additional functionality for date shifting, column exclusion, field value scanning, and random sampling.
 
+### ⚠️ Warning / Disclaimer
+
+This implementation of **whiteRRabbit** is inspired by the summary statistics approach from [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit). However, this version may lack several features present in the original tool—especially those related to privacy protection. **Do not assume that the generated summary statistics are completely free of individual-level or sensitive data.** Always review the output thoroughly and ensure compliance with all applicable local regulations and data protection policies before sharing any generated files. When in doubt, consult your legal or regulatory authorities.
+
 ---
 
 ## 📄 License
