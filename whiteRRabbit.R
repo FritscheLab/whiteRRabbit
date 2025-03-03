@@ -44,9 +44,10 @@ option_list <- list(
         help = "Output format: 'xlsx' (one Excel file) or 'tsv' (multiple TSVs) [default: %default]",
         metavar = "FORMAT"
     ),
+    # Set default maxRows to 100,000 so that by default only 100,000 rows are processed.
     make_option(c("-m", "--maxRows"),
-        type = "integer", default = -1,
-        help = "Maximum rows to read per file (-1 for all) [default: %default]", metavar = "N"
+        type = "integer", default = 100000,
+        help = "Maximum rows to read per file (-1 for all). If random_sample is TRUE, a random sample of maxRows is used [default: %default]", metavar = "N"
     ),
     make_option(c("-x", "--maxDistinctValues"),
         type = "integer", default = 1000,
@@ -67,6 +68,21 @@ option_list <- list(
     make_option(c("-s", "--shift_dates"),
         action = "store_true", default = FALSE,
         help = "If set, randomly shift date/datetime columns by ±5 days before summarizing"
+    ),
+    # New option: whether to generate frequency tables by scanning field values.
+    make_option(c("--scan_field_values"),
+        action = "store_true", default = TRUE,
+        help = "Scan field values to generate frequency tables [default: %default]"
+    ),
+    # New option: minimum cell count required for a value to appear in frequency tables.
+    make_option(c("--min_cell_count"),
+        type = "integer", default = 5,
+        help = "Minimum count threshold for a value to appear in frequency tables [default: %default]", metavar = "N"
+    ),
+    # New option: use random sampling on the file level.
+    make_option(c("--random_sample"),
+        action = "store_true", default = TRUE,
+        help = "Randomly sample rows from table if total rows exceed maxRows [default: %default]"
     )
 )
 
@@ -125,89 +141,64 @@ if (!is.null(opts$exclude_cols)) {
 
 # ---- Helper: robust parse for numeric ----------------------------------------
 robust_parse_numeric <- function(x_char, success_threshold = 0.8) {
-    # Must be character to attempt numeric parse
     if (!is.character(x_char)) {
         return(x_char)
     }
-
     x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
     if (length(x_nonempty) == 0) {
         return(x_char)
     }
-
-    # Check sample for success rate
     sample_size <- min(length(x_nonempty), 1000)
     x_sample <- sample(x_nonempty, sample_size)
-
-    # Attempt numeric parse
     nums <- suppressWarnings(as.numeric(x_sample))
     sr <- sum(!is.na(nums)) / length(nums)
     if (sr < success_threshold) {
-        # not enough success
         return(x_char)
     }
-
-    # Convert entire column
     parsed_full <- suppressWarnings(as.numeric(x_char))
     parsed_full
 }
 
 # ---- Helper: robust parse for date/time --------------------------------------
 robust_parse_date <- function(x_char, success_threshold = 0.8) {
-    # Must be character to attempt date parse
     if (!is.character(x_char)) {
         return(x_char)
     }
-
     x_nonempty <- x_char[!is.na(x_char) & x_char != ""]
     if (length(x_nonempty) == 0) {
         return(x_char)
     }
-
     sample_size <- min(length(x_nonempty), 1000)
     x_sample <- sample(x_nonempty, sample_size)
-
-    # We'll define multiple orders
     possible_orders <- c(
         "Ymd HMS", "Ymd HM", "Ymd", "YmdT",
         "mdY HMS", "mdY HM", "mdY",
         "dmy HMS", "dmy HM", "dmy"
     )
-
-    # parse sample in a tryCatch
     sample_parsed <- tryCatch(
         {
             suppressWarnings(parse_date_time(x_sample, orders = possible_orders, tz = "UTC", quiet = TRUE))
         },
         error = function(e) {
-            # entire parse failed => return all NA
             rep(NA, length(x_sample))
         }
     )
-
     sr <- sum(!is.na(sample_parsed)) / length(sample_parsed)
     if (sr < success_threshold) {
         return(x_char)
     }
-
-    # parse full
     parsed_full <- tryCatch(
         {
             suppressWarnings(parse_date_time(x_char, orders = possible_orders, tz = "UTC", quiet = TRUE))
         },
         error = function(e) {
-            # fallback => all NA
             rep(NA, length(x_char))
         }
     )
-
-    # optional second pass success check
     sr2 <- sum(!is.na(parsed_full)) / length(parsed_full)
     if (sr2 < success_threshold) {
-        # revert to character
         return(x_char)
     }
-
     parsed_full
 }
 
@@ -224,25 +215,55 @@ count_lines_fast <- function(filepath) {
 }
 
 scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
-                      excluded_cols, shiftDates) {
-    totalRows <- count_lines_fast(filepath) - 1L
+                      excluded_cols, shiftDates, random_sample,
+                      scan_field_values, min_cell_count) {
+    # Get total number of lines (including header)
+    total_lines <- count_lines_fast(filepath)
+    data_rows <- total_lines - 1L
 
-    # Force read all as character
-    if (maxRows < 0) {
-        dt <- fread(filepath,
-            sep = read_sep, showProgress = FALSE,
-            colClasses = "character"
-        )
-        nRowsChecked <- nrow(dt)
+    if (maxRows > 0 && random_sample && data_rows > maxRows) {
+        if (.Platform$OS.type != "windows") {
+            # Non-Windows: Use AWK-based sampling
+            tmp_lines <- tempfile("rand_lines")
+            sampled_lines <- sort(sample(2:total_lines, maxRows))
+            writeLines(as.character(sampled_lines), con = tmp_lines)
+
+            awk_cmd <- sprintf(
+                "awk 'NR==FNR { a[$1]=1; next } (FNR==1) || (FNR in a)' %s %s",
+                shQuote(tmp_lines), shQuote(filepath)
+            )
+            dt <- fread(cmd = awk_cmd, sep = read_sep, colClasses = "character")
+            nRowsChecked <- nrow(dt)
+            unlink(tmp_lines)
+        } else {
+            # Windows alternative: only if there are at least twice as many data rows as maxRows
+            if (data_rows >= 2 * maxRows) {
+                first_part <- fread(filepath, sep = read_sep, nrows = maxRows, colClasses = "character")
+                last_part <- fread(filepath, sep = read_sep, skip = total_lines - maxRows, colClasses = "character")
+                # Set column names for the last part using the header from the first part
+                setnames(last_part, names(first_part))
+                dt <- unique(rbindlist(list(first_part, last_part)))
+                dt <- dt[sample(.N, maxRows)]
+                nRowsChecked <- nrow(dt)
+            } else {
+                dt <- fread(filepath, sep = read_sep, showProgress = FALSE, colClasses = "character")
+                nRowsChecked <- nrow(dt)
+                if (maxRows > 0 && random_sample && nRowsChecked > maxRows) {
+                    dt <- dt[sample(.N, maxRows)]
+                    nRowsChecked <- nrow(dt)
+                }
+            }
+        }
     } else {
-        dt <- fread(filepath,
-            sep = read_sep, nrows = maxRows, showProgress = FALSE,
-            colClasses = "character"
-        )
-        nRowsChecked <- min(totalRows, maxRows)
+        dt <- fread(filepath, sep = read_sep, showProgress = FALSE, colClasses = "character")
+        nRowsChecked <- nrow(dt)
+        if (maxRows > 0 && random_sample && nRowsChecked > maxRows) {
+            dt <- dt[sample(.N, maxRows)]
+            nRowsChecked <- nrow(dt)
+        }
     }
 
-    # Attempt numeric then date/time parse
+    # Attempt numeric then date/time parse for each column
     for (colName in names(dt)) {
         dt[[colName]] <- robust_parse_numeric(dt[[colName]])
         if (is.character(dt[[colName]])) {
@@ -262,21 +283,16 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
     }
 
     nFields <- ncol(dt)
-
     all_empty <- sapply(dt, function(x) {
         sumNA <- sum(is.na(x))
-
-        # Only count "" if x is character
         sumEmpty <- if (is.character(x)) {
             sum(x == "", na.rm = TRUE)
         } else {
             0
         }
-
         (sumNA + sumEmpty) == length(x)
     })
     nFieldsEmpty <- sum(all_empty)
-
     cols_to_process <- setdiff(names(dt), excluded_cols)
 
     column_summaries <- list()
@@ -287,7 +303,6 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         col_class <- class(x)
 
         nMissing <- sum(is.na(x))
-        # Counting empty strings safely
         nEmpty <- if (is.character(x)) {
             sum(x == "", na.rm = TRUE)
         } else {
@@ -295,38 +310,38 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         }
 
         if (is.character(x)) {
-            # For character columns, exclude both NA and ""
             x_nonmissing <- x[!is.na(x) & x != ""]
         } else {
-            # For numeric / date / other columns, just exclude NA
             x_nonmissing <- x[!is.na(x)]
         }
-
-
         distinct_count <- length(unique(x_nonmissing))
 
-        # Frequencies
+        # Generate frequency table if scan_field_values is TRUE
         freqDF <- data.frame()
-        if (distinct_count > 0) {
-            tab <- sort(table(x_nonmissing), decreasing = TRUE)
-            if (length(tab) > maxDistinctValues) {
-                tab <- tab[1:maxDistinctValues]
+        if (scan_field_values) {
+            if (distinct_count > 0) {
+                tab <- sort(table(x_nonmissing), decreasing = TRUE)
+                # Only include values that appear at least min_cell_count times
+                tab <- tab[tab >= min_cell_count]
+                if (length(tab) > maxDistinctValues) {
+                    tab <- tab[1:maxDistinctValues]
+                }
+                if (length(tab) > 0) {
+                    freqDF <- data.frame(
+                        Column = colName,
+                        Value = names(tab),
+                        Count = as.integer(tab),
+                        Percentage = as.numeric(tab) / sum(tab) * 100,
+                        stringsAsFactors = FALSE
+                    )
+                }
             }
-            if (length(tab) > 0) {
-                freqDF <- data.frame(
-                    Column = colName,
-                    Value = names(tab),
-                    Count = as.integer(tab),
-                    Percentage = as.numeric(tab) / sum(tab) * 100,
-                    stringsAsFactors = FALSE
-                )
+            if (nrow(freqDF) > 0) {
+                freq_list[[colName]] <- freqDF
             }
-        }
-        if (nrow(freqDF) > 0) {
-            freq_list[[colName]] <- freqDF
         }
 
-        # numeric stats
+        # Numeric statistics
         minVal <- NA
         maxVal <- NA
         medianVal <- NA
@@ -335,7 +350,6 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
         q1Val <- NA
         q3Val <- NA
         iqrVal <- NA
-
         if (is.numeric(x)) {
             x_num <- x[!is.na(x)]
             if (length(x_num) > 0) {
@@ -351,7 +365,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             }
         }
 
-        # date stats
+        # Date statistics
         earliestVal <- NA
         latestVal <- NA
         medianDateVal <- NA
@@ -362,7 +376,6 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                 latestVal <- max(x_date, na.rm = TRUE)
                 med_dt_num <- median(as.numeric(x_date), na.rm = TRUE)
                 if (inherits(x, "POSIXt")) {
-                    # guess tz from first non-NA
                     tz_value <- "UTC"
                     idx_nonna <- which(!is.na(x_date))
                     if (length(idx_nonna) > 0) {
@@ -411,7 +424,7 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
 
     list(
         file = filepath,
-        totalRows = totalRows,
+        totalRows = total_lines,
         nRowsChecked = nRowsChecked,
         nFields = ncol(dt),
         nFieldsEmpty = sum(all_empty),
@@ -430,7 +443,10 @@ for (f in files) {
         read_sep = read_sep,
         maxDistinctValues = opts$maxDistinctValues,
         excluded_cols = excluded_cols,
-        shiftDates = opts$shift_dates
+        shiftDates = opts$shift_dates,
+        random_sample = opts$random_sample,
+        scan_field_values = opts$scan_field_values,
+        min_cell_count = opts$min_cell_count
     )
     results[[f]] <- res
 }
@@ -454,7 +470,6 @@ fmt <- tolower(opts$output_format)
 
 if (fmt == "xlsx") {
     wb <- createWorkbook()
-
     # Overview
     addWorksheet(wb, "Overview")
     writeData(wb, "Overview", df_overview, headerStyle = createStyle(textDecoration = "bold"))
@@ -468,15 +483,13 @@ if (fmt == "xlsx") {
         if (nchar(shtName) > 31) {
             shtName <- substr(shtName, 1, 31)
         }
-
         # Summary
         addWorksheet(wb, shtName)
         df_sum <- results[[nm]]$summaryDF
         writeData(wb, shtName, df_sum, headerStyle = createStyle(textDecoration = "bold"))
         setColWidths(wb, shtName, cols = 1:ncol(df_sum), widths = "auto")
         freezePane(wb, shtName, firstRow = TRUE)
-
-        # Frequencies
+        # Frequencies (only if frequency data exists)
         df_freq <- results[[nm]]$freqDF
         if (nrow(df_freq) > 0) {
             freqSheetName <- paste0(shtName, "_Freq")
@@ -489,7 +502,6 @@ if (fmt == "xlsx") {
             freezePane(wb, freqSheetName, firstRow = TRUE)
         }
     }
-
     out_xlsx <- file.path(outdir, paste0(prefix, ".xlsx"))
     saveWorkbook(wb, out_xlsx, overwrite = TRUE)
     message("Wrote Excel file: ", out_xlsx)
@@ -497,16 +509,13 @@ if (fmt == "xlsx") {
     overview_path <- file.path(outdir, paste0(prefix, "_Overview.tsv"))
     fwrite(df_overview, file = overview_path, sep = "\t")
     message("Wrote overview TSV: ", overview_path)
-
     for (nm in names(results)) {
         shtName <- basename(nm)
         shtName <- gsub("[\\/?*:]", "_", shtName)
-
         df_sum <- results[[nm]]$summaryDF
         sum_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Summary.tsv"))
         fwrite(df_sum, file = sum_tsv, sep = "\t")
         message("Wrote summary TSV: ", sum_tsv)
-
         df_freq <- results[[nm]]$freqDF
         if (nrow(df_freq) > 0) {
             freq_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Freq.tsv"))

@@ -16,18 +16,21 @@ The tool is optimized with `data.table` for efficient handling of large datasets
 - Computes:
   - Row and field counts.
   - Missing and empty value statistics.
-  - Frequencies of distinct values (limited to top N).
+  - Frequencies of distinct values by scanning field values (with configurable minimum cell count).
   - Numeric summaries (min, max, median, mean, standard deviation, quartiles, IQR).
   - Date/time parsing and summaries (Earliest, Latest, Median date).
 - Handles multiple files within a folder.
 - Outputs:
-  - **Excel workbook (`.xlsx`)** with an Overview sheet, individual summary sheets for each file, and optional frequency sheets.
+  - **Excel workbook (`.xlsx`)** with an Overview sheet, individual summary sheets for each file, and additional frequency sheets (if frequency data exists).
   - **TSV files** for downstream processing, including overview, summary, and frequency files.
-- Multi-threaded using `data.table`.
+- Multi-threaded processing using `data.table`.
 - Fully parameterized via the command line (`optparse`).
-- **New Functionality:**
-  - **Exclude Columns:** Use `--exclude_cols` to omit specified columns from the summary.
-  - **Shift Dates:** Use the `--shift_dates` flag to randomly shift date/datetime columns by ±5 days before summarizing.
+
+**New Functionality:**
+- **Exclude Columns:** Use `--exclude_cols` to omit specified columns from the summary.
+- **Shift Dates:** Use the `--shift_dates` flag to randomly shift date/datetime columns by ±5 days before summarizing.
+- **Field Value Scanning:** Generate frequency tables for field values with `--scan_field_values` (enabled by default) and set a minimum cell count with `--min_cell_count`.
+- **Random Sampling:** Use `--random_sample` (enabled by default) to randomly sample rows when total rows exceed `--maxRows` (default: 100000).
 
 ---
 
@@ -63,13 +66,18 @@ Rscript whiteRRabbit.R \
   --delimiter "tab" \
   --output_dir "/path/to/output_folder" \
   --output_format "xlsx" \
-  --maxRows -1 \
+  --maxRows 100000 \
   --maxDistinctValues 1000 \
   --prefix "MyScanReport" \
   --cpus 4 \
   --exclude_cols "col1,col2" \
-  --shift_dates
+  --shift_dates \
+  --scan_field_values \
+  --min_cell_count 5 \
+  --random_sample
 ```
+
+*Note:* By default, `--maxRows` is set to 100000 (i.e. only 100,000 rows are processed per file). Use `-1` to process all rows.
 
 For a **full list of options and detailed examples**, see the [whiteRRabbit documentation](/doc/whiteRRabbit.md).
 
@@ -92,13 +100,13 @@ whiteRRabbit/
 Depending on the chosen `--output_format`:
 
 ### XLSX
-- `ScanReport.xlsx`
+- `<prefix>.xlsx` (default prefix: ScanReport)
   - **Overview** sheet: Summary of all scanned files.
   - One sheet per input file with column-level summaries.
   - Additional frequency sheet(s) per file (if frequency data exists).
 
 ### TSV
-- `ScanReport_Overview.tsv`
+- `<prefix>_Overview.tsv`
 - One TSV per input file for column summaries.
 - Additional TSV file(s) for frequency data (if available).
 
@@ -123,7 +131,7 @@ Depending on the chosen `--output_format`:
 
 ## 📖 Inspiration
 
-Derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java tool, adapted into R for integration into FritscheLab workflows and enhanced with additional functionality for date shifting and column exclusion.
+Derived from the [OHDSI WhiteRabbit](https://github.com/OHDSI/WhiteRabbit) Java tool, adapted into R for integration into FritscheLab workflows and enhanced with additional functionality for date shifting, column exclusion, field value scanning, and random sampling.
 
 ---
 

@@ -15,30 +15,38 @@ Rscript whiteRRabbit.R \
   --delimiter "comma" \
   --output_dir "/data/output" \
   --output_format "xlsx" \
-  --maxRows -1 \
+  --maxRows 100000 \
   --maxDistinctValues 1000 \
   --prefix "DatasetScan" \
   --cpus 4 \
   --exclude_cols "colA,colB" \
-  --shift_dates
+  --shift_dates \
+  --scan_field_values \
+  --min_cell_count 5 \
+  --random_sample
 ```
+
+*Note:* By default, `--maxRows` is set to 100000, meaning only the first 100,000 rows are processed per file. Use `-1` to process all rows.
 
 ---
 
 ## 🎛️ Argument Reference
 
-| Argument                   | Type        | Default              | Description |
-| -------------------------- | ----------- | -------------------- | ----------- |
-| `-w, --working_folder`     | `character` | **(Required)**       | Directory containing the input files to scan. |
-| `-d, --delimiter`          | `character` | `"tab"`              | File delimiter: `"tab"` for `.tsv` or `"comma"` for `.csv`. |
-| `-o, --output_dir`         | `character` | `"."` (current dir)  | Directory where output files will be saved. |
-| `-f, --output_format`      | `character` | `"xlsx"`             | Output format: `"xlsx"` for a single Excel workbook or `"tsv"` for multiple TSV files. |
-| `-m, --maxRows`            | `integer`   | `-1` (all rows)      | Maximum number of rows to process per file. |
-| `-x, --maxDistinctValues`  | `integer`   | `1000`               | Maximum number of unique values to display in frequency summaries. |
-| `-p, --prefix`             | `character` | `"ScanReport"`       | Prefix to use in output file names. |
-| `-c, --cpus`               | `integer`   | `1`                  | Number of CPU threads to use with `data.table`. |
-| `-e, --exclude_cols`       | `character` | `NULL`               | Comma-separated list of columns to exclude from the summary. |
-| `-s, --shift_dates`        | (flag)      | `FALSE`              | If set, randomly shifts date/datetime columns by ±5 days before summarizing. |
+| Argument                   | Type        | Default                             | Description |
+| -------------------------- | ----------- | ----------------------------------- | ----------- |
+| `-w, --working_folder`    | `character` | **(Required)**                      | Directory containing the input files to scan. |
+| `-d, --delimiter`         | `character` | `"tab"`                             | File delimiter: `"tab"` for `.tsv` or `"comma"` for `.csv`. |
+| `-o, --output_dir`        | `character` | `"."` (current directory)           | Directory where output files will be saved. |
+| `-f, --output_format`     | `character` | `"xlsx"`                            | Output format: `"xlsx"` for a single Excel workbook or `"tsv"` for multiple TSV files. |
+| `-m, --maxRows`           | `integer`   | `100000`                            | Maximum rows to process per file (-1 for all rows). If `--random_sample` is enabled, a random sample of `maxRows` is used. |
+| `-x, --maxDistinctValues` | `integer`   | `1000`                              | Maximum number of unique values to display in frequency summaries. |
+| `-p, --prefix`            | `character` | `"ScanReport"`                      | Prefix for output file names. |
+| `-c, --cpus`              | `integer`   | `1`                                 | Number of CPU threads to use with `data.table`. |
+| `-e, --exclude_cols`      | `character` | `NULL`                              | Comma-separated list of columns to exclude from the summary. |
+| `-s, --shift_dates`       | (flag)      | `FALSE`                             | If set, randomly shifts date/datetime columns by ±5 days before summarizing. |
+| `--scan_field_values`      | (flag)      | `TRUE`                              | If enabled, scans field values to generate frequency tables. |
+| `--min_cell_count`         | `integer`   | `5`                                 | Minimum count threshold for a value to appear in frequency tables. |
+| `--random_sample`          | (flag)      | `TRUE`                              | If enabled, randomly samples rows when total rows exceed `--maxRows`. |
 
 ---
 
@@ -46,17 +54,17 @@ Rscript whiteRRabbit.R \
 
 ### 📁 Output Files
 
-| Format | File(s) | Description |
-| ------ | ------- | ----------- |
-| `xlsx` | `ScanReport.xlsx` | Single workbook containing an **Overview** sheet, individual summary sheets for each scanned file, and optional frequency sheets (if frequency data exists). |
-| `tsv`  | `ScanReport_Overview.tsv` | Overview TSV summarizing all scanned files. |
-| `tsv`  | `ScanReport_<filename>_Summary.tsv` | Column-level summary TSV for each scanned file. |
-| `tsv`  | `ScanReport_<filename>_Freq.tsv` | Frequency TSV for each scanned file (if applicable). |
+| Format | File(s)                                 | Description |
+| ------ | --------------------------------------- | ----------- |
+| `xlsx` | `<prefix>.xlsx`                         | Single workbook containing an **Overview** sheet, individual summary sheets for each scanned file, and optional frequency sheets (if frequency data exists). |
+| `tsv`  | `<prefix>_Overview.tsv`                  | Overview TSV summarizing all scanned files. |
+| `tsv`  | `<prefix>_<filename>_Summary.tsv`        | Column-level summary TSV for each scanned file. |
+| `tsv`  | `<prefix>_<filename>_Freq.tsv`           | Frequency TSV for each scanned file (if applicable). |
 
 ### 📝 Overview Sheet Example
-| Table      | Description    | N_rows | N_rows_checked | N_Fields | N_Fields_Empty |
-| ---------- | -------------- | ------ | -------------- | -------- | --------------- |
-| example.tsv| No description | 50000  | 50000          | 20       | 2               |
+| Table       | Description    | N_rows | N_rows_checked | N_Fields | N_Fields_Empty |
+| ----------- | -------------- | ------ | -------------- | -------- | --------------- |
+| example.tsv | No description | 50000  | 50000          | 20       | 2               |
 
 ### 📝 Column Summary Example
 The summary for each file includes detailed statistics for each column. For example:
@@ -73,26 +81,26 @@ The summary for each file includes detailed statistics for each column. For exam
 ## 🔍 Processing Logic
 
 For each input file:
-1. **Line Count**: Quickly estimates total rows using system utilities (`wc -l` on Unix or a full file read on Windows).
-2. **Partial Reads**: Respects the `--maxRows` option to limit processing.
-3. **Column Profiling**:
+1. **Line Count:** Quickly estimates total rows using system utilities (`wc -l` on Unix or full file read on Windows).
+2. **Partial Reads:** Processes up to `--maxRows` rows (default 100000). If `--random_sample` is enabled and the file exceeds `maxRows`, a random sample of rows is used.
+3. **Column Profiling:**
    - Counts missing (`NA`) and empty (`""`) values.
-   - Calculates top N frequencies for categorical data (if the distinct count is within `--maxDistinctValues`).
+   - Calculates top frequencies for categorical data if `--scan_field_values` is enabled. Only values with counts meeting or exceeding `--min_cell_count` are included.
    - Computes numeric summaries (min, max, median, mean, standard deviation, quartiles, and IQR) for numeric columns.
-   - Parses date/time columns using common formats and computes date statistics (Earliest, Latest, Median date).
-4. **Optional Features**:
+   - Parses date/time columns using multiple common formats and computes date statistics (Earliest, Latest, Median date).
+4. **Optional Features:**
    - **Exclude Columns:** Columns specified via `--exclude_cols` are omitted from the summary.
    - **Shift Dates:** If the `--shift_dates` flag is set, date/datetime columns are randomly shifted by ±5 days.
-5. **Overview Assembly**: Creates an overview table summarizing all scanned files.
-6. **Output Generation**: Produces either an `.xlsx` workbook or multiple `.tsv` files based on the `--output_format` option.
+5. **Overview Assembly:** Creates an overview table summarizing all scanned files.
+6. **Output Generation:** Produces either an Excel workbook (`xlsx`) or multiple TSV files (`tsv`) based on the `--output_format` option.
 
 ---
 
 ## 🧠 Performance Notes
 
-- **Multi-threading** is enabled via `data.table::setDTthreads()` based on the `--cpus` option.
-- Optimized for large files; typical for millions of rows per file.
-- Windows-compatible, with fallback methods for line counting if Unix utilities are unavailable.
+- **Multi-threading:** Utilizes `data.table::setDTthreads()` based on the `--cpus` option.
+- Optimized for large files, typically handling millions of rows per file.
+- Windows-compatible with fallback methods for line counting when Unix utilities are unavailable.
 
 ---
 
