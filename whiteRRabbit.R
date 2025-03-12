@@ -456,15 +456,17 @@ for (f in files) {
     results[[f]] <- res
 }
 
-# Build the overview data frame
-overview_list <- lapply(results, function(x) {
+# Build the overview data frame with Table index
+overview_list <- lapply(seq_along(results), function(i) {
+    res <- results[[i]]
     data.frame(
-        Table = basename(x$file),
+        Table = paste0("File", i),
+        FileName = basename(res$file),
         Description = "No description",
-        N_rows = x$totalRows,
-        N_rows_checked = x$nRowsChecked,
-        N_Fields = x$nFields,
-        N_Fields_Empty = x$nFieldsEmpty,
+        N_rows = res$totalRows,
+        N_rows_checked = res$nRowsChecked,
+        N_Fields = res$nFields,
+        N_Fields_Empty = res$nFieldsEmpty,
         stringsAsFactors = FALSE
     )
 })
@@ -481,26 +483,19 @@ if (fmt == "xlsx") {
     setColWidths(wb, "Overview", cols = 1:ncol(df_overview), widths = "auto")
     freezePane(wb, "Overview", firstRow = TRUE)
 
-    # Summaries & Frequencies
-    for (nm in names(results)) {
-        shtName <- basename(nm)
-        shtName <- gsub("[\\/?*:]", "_", shtName)
-        if (nchar(shtName) > 31) {
-            shtName <- substr(shtName, 1, 31)
-        }
-        # Summary
-        addWorksheet(wb, shtName)
-        df_sum <- results[[nm]]$summaryDF
-        writeData(wb, shtName, df_sum, headerStyle = createStyle(textDecoration = "bold"))
-        setColWidths(wb, shtName, cols = 1:ncol(df_sum), widths = "auto")
-        freezePane(wb, shtName, firstRow = TRUE)
-        # Frequencies (only if frequency data exists)
-        df_freq <- results[[nm]]$freqDF
+    # Summaries & Frequencies using Table index for sheet names
+    for (i in seq_along(results)) {
+        tabIndex <- paste0("File", i)
+        # Summary sheet
+        addWorksheet(wb, tabIndex)
+        df_sum <- results[[i]]$summaryDF
+        writeData(wb, tabIndex, df_sum, headerStyle = createStyle(textDecoration = "bold"))
+        setColWidths(wb, tabIndex, cols = 1:ncol(df_sum), widths = "auto")
+        freezePane(wb, tabIndex, firstRow = TRUE)
+        # Frequency sheet (if exists)
+        df_freq <- results[[i]]$freqDF
         if (nrow(df_freq) > 0) {
-            freqSheetName <- paste0(shtName, "_Freq")
-            if (nchar(freqSheetName) > 31) {
-                freqSheetName <- substr(freqSheetName, 1, 31)
-            }
+            freqSheetName <- paste0(tabIndex, "freq")
             addWorksheet(wb, freqSheetName)
             writeData(wb, freqSheetName, df_freq, headerStyle = createStyle(textDecoration = "bold"))
             setColWidths(wb, freqSheetName, cols = 1:ncol(df_freq), widths = "auto")
@@ -514,16 +509,15 @@ if (fmt == "xlsx") {
     overview_path <- file.path(outdir, paste0(prefix, "_Overview.tsv"))
     fwrite(df_overview, file = overview_path, sep = "\t")
     message("Wrote overview TSV: ", overview_path)
-    for (nm in names(results)) {
-        shtName <- basename(nm)
-        shtName <- gsub("[\\/?*:]", "_", shtName)
-        df_sum <- results[[nm]]$summaryDF
-        sum_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Summary.tsv"))
+    for (i in seq_along(results)) {
+        tabIndex <- paste0("File", i)
+        df_sum <- results[[i]]$summaryDF
+        sum_tsv <- file.path(outdir, paste0(prefix, "_", tabIndex, "_Summary.tsv"))
         fwrite(df_sum, file = sum_tsv, sep = "\t")
         message("Wrote summary TSV: ", sum_tsv)
-        df_freq <- results[[nm]]$freqDF
+        df_freq <- results[[i]]$freqDF
         if (nrow(df_freq) > 0) {
-            freq_tsv <- file.path(outdir, paste0(prefix, "_", shtName, "_Freq.tsv"))
+            freq_tsv <- file.path(outdir, paste0(prefix, "_", tabIndex, "_Freq.tsv"))
             fwrite(df_freq, file = freq_tsv, sep = "\t")
             message("Wrote frequencies TSV: ", freq_tsv)
         }
