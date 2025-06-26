@@ -380,9 +380,9 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
                 med_dt_num <- median(as.numeric(x_date), na.rm = TRUE)
                 if (inherits(x, "POSIXt")) {
                     tz_value <- "UTC"
-                    idx_nonna <- which(!is.na(x_date))
-                    if (length(idx_nonna) > 0) {
-                        tz_value <- tz(x_date[idx_nonna[1]])
+                    idx_non_na <- which(!is.na(x_date))
+                    if (length(idx_non_na) > 0) {
+                        tz_value <- tz(x_date[idx_non_na[1]])
                         if (is.null(tz_value) || tz_value == "") tz_value <- "UTC"
                     }
                     medianDateVal <- as.POSIXct(med_dt_num, origin = "1970-01-01", tz = tz_value)
