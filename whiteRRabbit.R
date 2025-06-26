@@ -240,8 +240,15 @@ scan_file <- function(filepath, maxRows, read_sep, maxDistinctValues,
             # Windows alternative: only if there are at least twice as many data rows as maxRows
             if (data_rows >= 2 * maxRows) {
                 first_part <- fread(filepath, sep = read_sep, nrows = maxRows, colClasses = "character")
-                last_part <- fread(filepath, sep = read_sep, skip = total_lines - maxRows, colClasses = "character")
-                # Set column names for the last part using the header from the first part
+                last_part <- fread(
+                    filepath,
+                    sep = read_sep,
+                    skip = total_lines - maxRows,
+                    nrows = maxRows,
+                    header = FALSE,
+                    colClasses = "character"
+                )
+                # Apply the header from the first part to the last part
                 setnames(last_part, names(first_part))
                 dt <- unique(rbindlist(list(first_part, last_part)))
                 dt <- dt[sample(.N, maxRows)]
