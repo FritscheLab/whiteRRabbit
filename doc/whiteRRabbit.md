@@ -123,7 +123,7 @@ For each input file:
 
 ## 📜 License
 
-This project is licensed under the [GNU General Public License v3.0 (2025)](https://www.gnu.org/licenses/gpl-3.0.html).
+This project is licensed under the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
 
 ---
 
