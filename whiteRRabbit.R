@@ -49,7 +49,7 @@ option_list <- list(
         help = "Maximum rows to read per file (-1 for all). If random_sample is TRUE, a random sample of maxRows is used [default: %default]", metavar = "N"
     ),
     make_option(c("-x", "--maxDistinctValues"),
-        type = "integer", default = 50,
+        type = "integer", default = 1000,
         help = "Maximum distinct values to display in Frequencies [default: %default]", metavar = "N"
     ),
     make_option(c("-p", "--prefix"),
